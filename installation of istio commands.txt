@@ -1,0 +1,153 @@
+gcloud container clusters get-credentials gke-cluster-public --zone asia-southeast1-a --project adira-playground
+
+
+kubectl create namespace istio-system
+curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.6.8 TARGET_ARCH=x86_64 sh -
+cd istio-1.6.8
+export PATH=$PWD/bin:$PATH
+
+
+INSTALL ISTIO
+istioctl install --set profile=demo
+kubectl label namespace default istio-injection=enabled
+>> kubectl apply -f samples/bookinfo/platform/kube/bookinfo.yaml <<
+kubectl get services
+kubectl get pods
+
+kubectl exec "$(kubectl get pod -l app=ratings -o jsonpath='{.items[0].metadata.name}')" -c ratings -- curl -s productpage:9080/productpage | grep -o "<title>.*</title>"
+kubectl apply -f samples/bookinfo/networking/bookinfo-gateway.yaml
+istioctl analyze
+
+>> choose other platform <<
+kubectl get svc istio-ingressgateway -n istio-system
+export INGRESS_HOST=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export INGRESS_PORT=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.spec.ports[?(@.name=="http2")].port}')
+export SECURE_INGRESS_PORT=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.spec.ports[?(@.name=="https")].port}')
+export INGRESS_HOST=workerNodeAddress
+>> kubectl get nodes <<
+export INGRESS_HOST=gke-cluster-1-default-pool-1f98fa15-l0w9
+gcloud compute firewall-rules create allow-gateway-http --allow "tcp:$INGRESS_PORT"
+gcloud compute firewall-rules create allow-gateway-https --allow "tcp:$SECURE_INGRESS_PORT"
+export INGRESS_HOST=$(kubectl get po -l istio=ingressgateway -n istio-system -o jsonpath='{.items[0].status.hostIP}')
+export GATEWAY_URL=$INGRESS_HOST:$INGRESS_PORT
+echo "$GATEWAY_URL"
+echo "http://$GATEWAY_URL/productpage"
+kubectl apply -f samples/addons
+while ! kubectl wait --for=condition=available --timeout=600s deployment/kiali -n istio-system; do sleep 1; done
+
+istioctl dashboard kiali
+
+
+
+>>>uninstall<<
+kubectl delete -f samples/addons
+istioctl manifest generate --set profile=demo | kubectl delete --ignore-not-found=true -f -
+
+
+kubectl delete namespace istio-system
+
+
+
+>>gcloud auth login<<
+
+
+>>setting project in cloudshell<<
+
+
+kubectl create serviceaccount dashboard -n default
+
+>>kubectl create clusterrolebinding add-on-cluster-admin \
+     --clusterrole=cluster-admin \
+     --serviceaccount=kube-system:default
+
+
+gcloud projects add-iam-policy-binding adira-playground\
+  --member=user:rahul.basvekar@fisclouds.com \
+  --role=roles/container.admin
+
+gcp cli 
+
+install gcloud in local vm
+try to access
+auth cluster connection
+dashboard
+
+
+
+>>delete namespace forcefully<<
+
+kubectl get namespace go-api-boilerplate -o json \
+            | tr -d "\n" | sed "s/\"finalizers\": \[[^]]\+\]/\"finalizers\": []/" \
+            | kubectl replace --raw /api/v1/namespaces/go-api-boilerplate/finalize -f -
+
+============================
+
+kubectl get namespace istio-system -o json \
+            | tr -d "\n" | sed "s/\"finalizers\": \[[^]]\+\]/\"finalizers\": []/" \
+            | kubectl replace --raw /api/v1/namespaces/istio-system/finalize -f -
+
+
+=================================================================
+
+16
+
+Simple trick
+
+You can edit namespace on console only kubectl edit <namespace name> remove/delete "Kubernetes" from inside the finalizer section and press enter or save/apply changes.
+
+in one step also you can do it.
+
+Trick : 1
+
+kubectl get namespace annoying-namespace-to-delete -o json > tmp.json
+
+then edit tmp.json and remove"kubernetes"
+
+Open another terminal and Run kubectl proxy
+
+curl -k -H "Content-Type: application/json" -X PUT --data-binary @tmp.json https://localhost:8001/api/v1/namespaces/<NAMESPACE NAME TO DELETE>/finalize
+
+and it should delete your namespace.
+
+Trick : 2
+
+Check the kubectl cluster-info
+
+1. kubectl cluster-info
+Kubernetes master is running at https://localhost:6443
+
+KubeDNS is running at https://localhost:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+To further debug and diagnose cluster problems, use
+
+2. kubectl cluster-info dump
+
+now start the proxy using command :
+
+3. kubectl proxy
+
+kubectl proxy & Starting to serve on 127.0.0.1:8001
+
+find namespace
+
+4. `kubectl get ns`
+{Your namespace name} Terminating 1d
+
+put it in file
+
+5. kubectl get namespace {Your namespace name} -o json > tmp.json
+
+edit the file tmp.json and remove the finalizers
+
+}, "spec": { "finalizers": [ "kubernetes" ] },
+
+after editing it should look like this
+
+}, "spec": { "finalizers": [ ] },
+
+we almost there simply now run the command
+
+curl -k -H "Content-Type: application/json" -X PUT --data-binary @tmp.json http://127.0.0.1:8001/api/v1/namespaces/{Your namespace name}/finalize
+and it's gone
+
+**
